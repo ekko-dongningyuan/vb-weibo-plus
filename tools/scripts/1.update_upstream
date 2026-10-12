@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 使用方式：./tools/scripts/1.update_upstream
+# 依赖 Git 和已登录的 GitHub CLI（gh）。
+# 先更新远程 fork 的 master，再更新本地 master，最后合并到当前 dev。
+# dev 的更新保留在本地，需要发布时执行 git push origin dev。
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+command -v gh >/dev/null || { printf '%s\n' '请先安装 GitHub CLI，并执行 gh auth login。' >&2; exit 1; }
+
+branch="$(git branch --show-current)"
+case "$branch" in
+    master|dev) ;;
+    *) printf '%s\n' '请切换到 master 或 dev 分支后再执行。' >&2; exit 1 ;;
+esac
+
+case "$(git config --get remote.origin.url)" in
+    https://github.com/ekko-dongningyuan/vb-weibo-plus.git|https://github.com/ekko-dongningyuan/vb-weibo-plus|git@github.com:ekko-dongningyuan/vb-weibo-plus.git) ;;
+    *) printf '%s\n' 'origin 必须指向 ekko-dongningyuan/vb-weibo-plus。' >&2; exit 1 ;;
+esac
+
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+    printf '%s\n' '请先提交改动，或使用 git stash 保存工作区改动，再更新上游代码。' >&2
+    exit 1
+fi
+
+printf '%s\n' '正在将上游 master 同步到 GitHub 上的 fork。'
+if ! gh repo sync ekko-dongningyuan/vb-weibo-plus --source findxyz/vb-weibo-plus --branch master; then
+    printf '%s\n' '远程同步失败，请检查 gh 登录、网络或 master 分支是否已分叉。' >&2
+    exit 1
+fi
+
+git fetch origin master
+if [[ "$branch" == dev ]]; then
+    git switch master
+fi
+
+if ! git merge --ff-only origin/master; then
+    if [[ "$branch" == dev ]]; then
+        git switch dev
+    fi
+    printf '%s\n' '本地 master 无法快进更新，请检查其与 origin/master 的差异。' >&2
+    exit 1
+fi
+
+if [[ "$branch" == dev ]]; then
+    git switch dev
+    if ! git merge --no-edit master; then
+        printf '%s\n' 'dev 合并失败。若存在冲突，请解决后执行 git add 和 git commit，或执行 git merge --abort 取消合并。' >&2
+        exit 1
+    fi
+fi
+
+printf '更新完成，当前分支为 %s。\n' "$branch"
